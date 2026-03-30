@@ -7,3 +7,4 @@ __pycache__/
 *.log
 assets/*.mp4
 assets/*.mov
+assets/*.png
