@@ -2,7 +2,7 @@
 set -e
 
 # MODEL="${MODEL_NAME:-qwen2.5-coder:7b}"
-MODEL="${MODEL_NAME:-qwen2.5-coder:3b}
+MODEL="${MODEL_NAME:-qwen2.5-coder:3b}"
 
 echo "================================================"
 echo "  AI Assignment Grader — Starting up"
