@@ -1,7 +1,8 @@
 #!/bin/bash
 set -e
 
-MODEL="${MODEL_NAME:-qwen2.5-coder:7b}"
+# MODEL="${MODEL_NAME:-qwen2.5-coder:7b}"
+MODEL="${MODEL_NAME:-qwen2.5-coder:3b}
 
 echo "================================================"
 echo "  AI Assignment Grader — Starting up"
@@ -10,6 +11,10 @@ echo "================================================"
 export OLLAMA_HOST=0.0.0.0:11434
 export OLLAMA_ORIGINS=*
 export OLLAMA_KEEP_ALIVE=-1
+
+export OLLAMA_NUM_THREADS=2          # match free tier vCPU count exactly
+export OLLAMA_MAX_LOADED_MODELS=1    # don't waste RAM on model slots
+export OLLAMA_FLASH_ATTENTION=1      # reduces memory usage per token
 
 echo "[1/3] Starting Ollama server..."
 ollama serve &

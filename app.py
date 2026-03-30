@@ -16,7 +16,7 @@ import traceback
 import threading
 
 import gradio as gr
-import fitz          # PyMuPDF
+import fitz  # PyMuPDF
 import nbformat
 import requests
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -24,14 +24,17 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 # ─────────────────────────────────────────────────────────────────────────────
 # Config
 # ─────────────────────────────────────────────────────────────────────────────
-MODEL_NAME   = os.getenv("MODEL_NAME", "qwen2.5-coder:7b")
-OLLAMA_URL   = "http://localhost:11434/api/chat"
-MAX_CODE_LEN = 3500
-TIMEOUT      = 300
+# MODEL_NAME   = os.getenv("MODEL_NAME", "qwen2.5-coder:7b")
+MODEL_NAME = os.getenv("MODEL_NAME", "qwen2.5-coder:3b")
+OLLAMA_URL = "http://localhost:11434/api/chat"
+# MAX_CODE_LEN = 3500
+MAX_CODE_LEN = 2000
+TIMEOUT = 300
 
 # ─────────────────────────────────────────────────────────────────────────────
 # File Parsers
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def extract_pdf_text(pdf_path: str) -> str:
     """Extract all text from a PDF using PyMuPDF."""
@@ -41,7 +44,8 @@ def extract_pdf_text(pdf_path: str) -> str:
     full = "\n\n".join(p for p in pages if p)
     if not full.strip():
         raise ValueError("PDF appears empty or image-only (no extractable text).")
-    return full[:1500] if len(full) > 1500 else full
+    # return full[:1500] if len(full) > 1500 else full
+    return full[:800] if len(full) > 800 else full
 
 
 def extract_notebook_code(ipynb_path: str) -> str:
@@ -57,8 +61,7 @@ def extract_notebook_code(ipynb_path: str) -> str:
             src = cell.source.strip()
             if src:
                 parts.append(
-                    f"# ── Markdown Cell {i+1} ──\n# "
-                    + "\n# ".join(src.splitlines())
+                    f"# ── Markdown Cell {i+1} ──\n# " + "\n# ".join(src.splitlines())
                 )
     if not parts:
         raise ValueError("Notebook has no code cells.")
@@ -76,7 +79,8 @@ def run_code_sandbox(ipynb_path: str, timeout: int = 30) -> dict:
         for cell in nb.cells:
             if cell.cell_type == "code":
                 lines = [
-                    l for l in cell.source.splitlines()
+                    l
+                    for l in cell.source.splitlines()
                     if not l.strip().startswith(("!", "%"))
                 ]
                 if lines:
@@ -86,8 +90,7 @@ def run_code_sandbox(ipynb_path: str, timeout: int = 30) -> dict:
             f.write("\n".join(code_lines))
             tmp_py = f.name
         result = subprocess.run(
-            ["python", tmp_py],
-            capture_output=True, text=True, timeout=timeout
+            ["python", tmp_py], capture_output=True, text=True, timeout=timeout
         )
         os.unlink(tmp_py)
         return {
@@ -97,8 +100,12 @@ def run_code_sandbox(ipynb_path: str, timeout: int = 30) -> dict:
             "error": None,
         }
     except subprocess.TimeoutExpired:
-        return {"success": False, "stdout": "", "stderr": "",
-                "error": f"Timed out after {timeout}s"}
+        return {
+            "success": False,
+            "stdout": "",
+            "stderr": "",
+            "error": f"Timed out after {timeout}s",
+        }
     except Exception as e:
         return {"success": False, "stdout": "", "stderr": "", "error": str(e)}
 
@@ -107,56 +114,83 @@ def run_code_sandbox(ipynb_path: str, timeout: int = 30) -> dict:
 # Prompts
 # ─────────────────────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = textwrap.dedent("""
-    You are a strict but fair programming instructor grading a student Jupyter notebook.
+SYSTEM_PROMPT = textwrap.dedent(
+    """
+    You are a strict programming instructor grading a Jupyter notebook.
 
-    You will receive:
-    - An assignment question
-    - A grading rubric with criteria, point values, and explicit penalty rules
-    - The student code extracted from their notebook
-    - Optionally: sandbox execution output
+    SCORING: Evaluate each rubric criterion. Score cannot exceed criterion max. Total cannot exceed 25. Verify sum before responding.
 
-    SCORING RULES — follow exactly:
-    1. Read each criterion in the rubric. Note its maximum points.
-    2. Apply every penalty listed that applies to the student code.
-    3. A criterion score CANNOT exceed its stated maximum.
-    4. Sum all criterion scores. The total CANNOT exceed 25.
-    5. If no rubric criterion mentions a topic, do not award or deduct for it.
-    6. When in doubt, deduct — do not give benefit of the doubt.
+    RUBRIC CHECK: For every penalty rule violated, add one areas_to_improve entry with rubric_requirement set to that exact rule. One violation = one entry.
 
-    RUBRIC CROSS-CHECK — mandatory:
-    Before writing areas_to_improve, scan every single rubric penalty rule.
-    For each rule, ask: "Did the student violate this?"
-    - YES → create one areas_to_improve entry with rubric_requirement set to that exact rule.
-    - NO  → skip it.
-    Each violation = one separate entry. Do not merge separate issues.
+    FEEDBACK: Strengths must cite actual code. Issues must name exact variable/function. No vague feedback. No invented mistakes.
 
-    FEEDBACK RULES:
-    - Strengths: cite actual code, function names, or techniques the student used.
-    - areas_to_improve entries must be specific and forensic.
-    - Do NOT be vague. "Improve variable names" is rejected.
-    - Do NOT invent mistakes not visible in the code.
-    - The sum of criterion_scores must equal total_score. Verify before responding.
-    - Respond ONLY with valid JSON. No markdown, no text outside the JSON.
-
-    Return exactly this schema:
+    Respond ONLY with this JSON:
     {
-      "criterion_scores": [
-        {"name": "<criterion name>", "score": <integer>, "max": <integer>}
-      ],
-      "total_score": <integer — must equal sum of criterion_scores, max 25>,
-      "strengths": ["Specific strength with code reference"],
-      "areas_to_improve": [
-        {
-          "category": "<Bug | Code Quality | Data Preprocessing | Modeling | Missing Requirement>",
-          "rubric_requirement": "The exact rubric penalty rule that was violated",
-          "issue": "What the student did wrong or completely missed",
-          "why_it_matters": "The consequence or reason this is wrong",
-          "fix": "Concrete suggestion or corrected code snippet"
-        }
-      ]
+      "criterion_scores": [{"name": str, "score": int, "max": int}],
+      "total_score": int,
+      "strengths": [str],
+      "areas_to_improve": [{
+        "category": "Bug|Code Quality|Data Preprocessing|Modeling|Missing Requirement",
+        "rubric_requirement": str,
+        "issue": str,
+        "why_it_matters": str,
+        "fix": str
+      }]
     }
-""").strip()
+"""
+).strip()
+# SYSTEM_PROMPT = textwrap.dedent(
+#     """
+#     You are a strict but fair programming instructor grading a student Jupyter notebook.
+
+#     You will receive:
+#     - An assignment question
+#     - A grading rubric with criteria, point values, and explicit penalty rules
+#     - The student code extracted from their notebook
+#     - Optionally: sandbox execution output
+
+#     SCORING RULES — follow exactly:
+#     1. Read each criterion in the rubric. Note its maximum points.
+#     2. Apply every penalty listed that applies to the student code.
+#     3. A criterion score CANNOT exceed its stated maximum.
+#     4. Sum all criterion scores. The total CANNOT exceed 25.
+#     5. If no rubric criterion mentions a topic, do not award or deduct for it.
+#     6. When in doubt, deduct — do not give benefit of the doubt.
+
+#     RUBRIC CROSS-CHECK — mandatory:
+#     Before writing areas_to_improve, scan every single rubric penalty rule.
+#     For each rule, ask: "Did the student violate this?"
+#     - YES → create one areas_to_improve entry with rubric_requirement set to that exact rule.
+#     - NO  → skip it.
+#     Each violation = one separate entry. Do not merge separate issues.
+
+#     FEEDBACK RULES:
+#     - Strengths: cite actual code, function names, or techniques the student used.
+#     - areas_to_improve entries must be specific and forensic.
+#     - Do NOT be vague. "Improve variable names" is rejected.
+#     - Do NOT invent mistakes not visible in the code.
+#     - The sum of criterion_scores must equal total_score. Verify before responding.
+#     - Respond ONLY with valid JSON. No markdown, no text outside the JSON.
+
+#     Return exactly this schema:
+#     {
+#       "criterion_scores": [
+#         {"name": "<criterion name>", "score": <integer>, "max": <integer>}
+#       ],
+#       "total_score": <integer — must equal sum of criterion_scores, max 25>,
+#       "strengths": ["Specific strength with code reference"],
+#       "areas_to_improve": [
+#         {
+#           "category": "<Bug | Code Quality | Data Preprocessing | Modeling | Missing Requirement>",
+#           "rubric_requirement": "The exact rubric penalty rule that was violated",
+#           "issue": "What the student did wrong or completely missed",
+#           "why_it_matters": "The consequence or reason this is wrong",
+#           "fix": "Concrete suggestion or corrected code snippet"
+#         }
+#       ]
+#     }
+# """
+# ).strip()
 
 
 def build_user_prompt(question, rubric, code, execution):
@@ -167,10 +201,13 @@ def build_user_prompt(question, rubric, code, execution):
     ]
     if execution:
         status = "✓ ran successfully" if execution["success"] else "✗ failed"
-        block  = f"Status: {status}\n"
-        if execution["stdout"]: block += f"Output:\n{execution['stdout']}\n"
-        if execution["stderr"]: block += f"Errors:\n{execution['stderr']}\n"
-        if execution["error"]:  block += f"Exception: {execution['error']}\n"
+        block = f"Status: {status}\n"
+        if execution["stdout"]:
+            block += f"Output:\n{execution['stdout']}\n"
+        if execution["stderr"]:
+            block += f"Errors:\n{execution['stderr']}\n"
+        if execution["error"]:
+            block += f"Exception: {execution['error']}\n"
         parts.append(f"=== EXECUTION RESULTS ===\n{block}")
     parts.append(
         "=== YOUR TASK ===\n"
@@ -185,29 +222,40 @@ def build_user_prompt(question, rubric, code, execution):
 # Ollama call
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
 def call_ollama(question, rubric, code, execution):
     payload = {
         "model": MODEL_NAME,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": build_user_prompt(question, rubric, code, execution)},
+            {
+                "role": "user",
+                "content": build_user_prompt(question, rubric, code, execution),
+            },
         ],
         "stream": False,
         "format": "json",
+        # "options": {
+        #     "temperature": 0.0,
+        #     "num_predict": 1500,
+        #     "num_ctx": 4096,
+        #     "num_thread": 4,
+        #     "num_batch": 512,
+        # },
         "options": {
             "temperature": 0.0,
-            "num_predict": 1500,
-            "num_ctx":     4096,
-            "num_thread":  4,
-            "num_batch":   512,
+            "num_predict": 800,  # was 1500 — your JSON output is ~400 tokens max
+            "num_ctx": 2048,  # was 4096 — rubric + code fits in 2048 easily
+            "num_thread": 2,  # match exactly to free tier vCPU count
+            "num_batch": 128,  # smaller batch = less memory pressure on 2 vCPU
         },
     }
     resp = requests.post(OLLAMA_URL, json=payload, timeout=TIMEOUT)
     resp.raise_for_status()
     raw = resp.json()["message"]["content"]
     raw = re.sub(r"^```json\s*", "", raw.strip())
-    raw = re.sub(r"```$",        "", raw.strip())
+    raw = re.sub(r"```$", "", raw.strip())
     result = json.loads(raw)
 
     # Python-side score guard — LLM cannot inflate scores
@@ -228,28 +276,43 @@ def call_ollama(question, rubric, code, execution):
 # ─────────────────────────────────────────────────────────────────────────────
 
 CATEGORY_COLORS = {
-    "Bug":                 ("#fee2e2", "#dc2626", "#fca5a5"),
-    "Code Quality":        ("#fef9c3", "#ca8a04", "#fde047"),
-    "Data Preprocessing":  ("#ede9fe", "#7c3aed", "#c4b5fd"),
-    "Modeling":            ("#fff7ed", "#ea580c", "#fdba74"),
+    "Bug": ("#fee2e2", "#dc2626", "#fca5a5"),
+    "Code Quality": ("#fef9c3", "#ca8a04", "#fde047"),
+    "Data Preprocessing": ("#ede9fe", "#7c3aed", "#c4b5fd"),
+    "Modeling": ("#fff7ed", "#ea580c", "#fdba74"),
     "Missing Requirement": ("#f0f9ff", "#0284c7", "#7dd3fc"),
 }
 
 
 def grade_to_color(pct):
-    if pct >= 0.85: return "#22c55e"
-    if pct >= 0.70: return "#84cc16"
-    if pct >= 0.55: return "#f59e0b"
-    if pct >= 0.40: return "#f97316"
+    if pct >= 0.85:
+        return "#22c55e"
+    if pct >= 0.70:
+        return "#84cc16"
+    if pct >= 0.55:
+        return "#f59e0b"
+    if pct >= 0.40:
+        return "#f97316"
     return "#ef4444"
 
 
 def render_html_report(result, llm_elapsed=0.0, total_elapsed=0.0):
     total = result.get("total_score", 0)
-    pct   = total / 25
+    pct = total / 25
     color = grade_to_color(pct)
-    grade = "A+" if pct>=0.90 else "A" if pct>=0.80 else "B" if pct>=0.70 \
-            else "C" if pct>=0.60 else "D" if pct>=0.50 else "F"
+    grade = (
+        "A+"
+        if pct >= 0.90
+        else (
+            "A"
+            if pct >= 0.80
+            else (
+                "B"
+                if pct >= 0.70
+                else "C" if pct >= 0.60 else "D" if pct >= 0.50 else "F"
+            )
+        )
+    )
 
     # Criterion breakdown
     criteria = result.get("criterion_scores", [])
@@ -257,7 +320,7 @@ def render_html_report(result, llm_elapsed=0.0, total_elapsed=0.0):
     if criteria:
         rows = ""
         for c in criteria:
-            c_pct = c["score"]/c["max"] if c.get("max") else 0
+            c_pct = c["score"] / c["max"] if c.get("max") else 0
             c_col = grade_to_color(c_pct)
             rows += f"""
             <tr style="border-bottom:1px solid #f1f5f9">
@@ -291,11 +354,11 @@ def render_html_report(result, llm_elapsed=0.0, total_elapsed=0.0):
     # Improvement cards
     improve_cards = ""
     for item in result.get("areas_to_improve", []):
-        cat        = item.get("category", "Code Quality")
+        cat = item.get("category", "Code Quality")
         rubric_req = item.get("rubric_requirement", "")
-        issue      = item.get("issue", "")
-        why        = item.get("why_it_matters", "")
-        fix        = item.get("fix", "")
+        issue = item.get("issue", "")
+        why = item.get("why_it_matters", "")
+        fix = item.get("fix", "")
         bg, text, border = CATEGORY_COLORS.get(cat, ("#f8fafc", "#475569", "#cbd5e1"))
 
         rubric_badge = ""
@@ -306,12 +369,15 @@ def render_html_report(result, llm_elapsed=0.0, total_elapsed=0.0):
               <span style="color:#e2e8f0;font-size:12px;line-height:1.5;font-style:italic">"{rubric_req}"</span>
             </div>"""
 
-        is_code  = any(tok in fix for tok in ["\n","def ","df.","import "," = ","()","[]",":"])
+        is_code = any(
+            tok in fix
+            for tok in ["\n", "def ", "df.", "import ", " = ", "()", "[]", ":"]
+        )
         fix_html = (
             f"<pre style='background:#1e293b;color:#e2e8f0;padding:10px 14px;border-radius:6px;"
             f"font-size:12px;overflow-x:auto;margin:8px 0 0;white-space:pre-wrap'>{fix}</pre>"
-            if is_code else
-            f"<p style='margin:6px 0 0;font-size:13px;color:#374151'><b>Fix:</b> {fix}</p>"
+            if is_code
+            else f"<p style='margin:6px 0 0;font-size:13px;color:#374151'><b>Fix:</b> {fix}</p>"
         )
 
         improve_cards += f"""
@@ -395,8 +461,13 @@ def render_html_report(result, llm_elapsed=0.0, total_elapsed=0.0):
 # Status helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _step(icon, label, msg, elapsed_str=""):
-    badge = f"<span style='float:right;color:#94a3b8;font-size:11px'>⏱ {elapsed_str}</span>" if elapsed_str else ""
+    badge = (
+        f"<span style='float:right;color:#94a3b8;font-size:11px'>⏱ {elapsed_str}</span>"
+        if elapsed_str
+        else ""
+    )
     return (
         f"<div style='padding:8px 12px;margin-bottom:6px;background:#f8fafc;"
         f"border-radius:8px;border-left:3px solid #94a3b8;font-size:13px;overflow:hidden'>"
@@ -405,9 +476,9 @@ def _step(icon, label, msg, elapsed_str=""):
 
 
 def _timer_html(seconds):
-    mins, secs = int(seconds)//60, int(seconds)%60
+    mins, secs = int(seconds) // 60, int(seconds) % 60
     time_str = f"{mins}m {secs:02d}s" if mins > 0 else f"{secs}s"
-    pulse_w  = int((seconds % 10) / 10 * 100)
+    pulse_w = int((seconds % 10) / 10 * 100)
     return f"""
     <div style="background:#0f172a;border-radius:10px;padding:14px 18px;margin-top:4px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -443,6 +514,7 @@ def _done_status(llm_elapsed, total_elapsed):
 # Main grading function
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def grade_assignment(question_pdf, rubric_txt, notebook_ipynb, run_code):
     overall_start = time.time()
     step_log = ""
@@ -452,15 +524,20 @@ def grade_assignment(question_pdf, rubric_txt, notebook_ipynb, run_code):
 
     try:
         if question_pdf is None:
-            yield None, "<p style='color:red'>❌ Please upload the assignment PDF.</p>", ""; return
+            yield None, "<p style='color:red'>❌ Please upload the assignment PDF.</p>", ""
+            return
         if rubric_txt is None:
-            yield None, "<p style='color:red'>❌ Please upload the rubric TXT file.</p>", ""; return
+            yield None, "<p style='color:red'>❌ Please upload the rubric TXT file.</p>", ""
+            return
         if notebook_ipynb is None:
-            yield None, "<p style='color:red'>❌ Please upload the student notebook (.ipynb).</p>", ""; return
+            yield None, "<p style='color:red'>❌ Please upload the student notebook (.ipynb).</p>", ""
+            return
 
-        pdf_path    = question_pdf    if isinstance(question_pdf,    str) else question_pdf.name
-        rubric_path = rubric_txt      if isinstance(rubric_txt,      str) else rubric_txt.name
-        nb_path     = notebook_ipynb  if isinstance(notebook_ipynb,  str) else notebook_ipynb.name
+        pdf_path = question_pdf if isinstance(question_pdf, str) else question_pdf.name
+        rubric_path = rubric_txt if isinstance(rubric_txt, str) else rubric_txt.name
+        nb_path = (
+            notebook_ipynb if isinstance(notebook_ipynb, str) else notebook_ipynb.name
+        )
 
         # Step 1 — Parse
         step_log = _step("⏳", "Step 1/3", "Parsing files...")
@@ -470,13 +547,15 @@ def grade_assignment(question_pdf, rubric_txt, notebook_ipynb, run_code):
         with open(rubric_path, "r", encoding="utf-8") as f:
             rubric = f.read()
         if not rubric.strip():
-            yield None, "<p style='color:red'>❌ Rubric file is empty.</p>", ""; return
+            yield None, "<p style='color:red'>❌ Rubric file is empty.</p>", ""
+            return
         code = extract_notebook_code(nb_path)
 
         step_log = _step(
-            "✅", "Step 1/3 complete",
+            "✅",
+            "Step 1/3 complete",
             f"PDF: {len(question):,} chars · Rubric: {len(rubric):,} chars · Code: {len(code):,} chars",
-            _elapsed()
+            _elapsed(),
         )
         yield None, None, step_log
 
@@ -488,15 +567,22 @@ def grade_assignment(question_pdf, rubric_txt, notebook_ipynb, run_code):
             t0 = time.time()
             execution = run_code_sandbox(nb_path, timeout=30)
             icon = "✅" if execution["success"] else "⚠️"
-            msg  = ("Ran successfully" if execution["success"]
-                    else (execution.get("error") or execution.get("stderr",""))[:80])
-            step_log += _step(icon, "Step 2/3 complete", f"{msg} ({time.time()-t0:.1f}s)", _elapsed())
+            msg = (
+                "Ran successfully"
+                if execution["success"]
+                else (execution.get("error") or execution.get("stderr", ""))[:80]
+            )
+            step_log += _step(
+                icon, "Step 2/3 complete", f"{msg} ({time.time()-t0:.1f}s)", _elapsed()
+            )
         else:
             step_log += _step("⏭️", "Step 2/3", "Code execution skipped.", _elapsed())
         yield None, None, step_log
 
         # Step 3 — LLM in background thread
-        step_log += _step("🧠", "Step 3/3", "Dispatching to Qwen2.5-Coder...", _elapsed())
+        step_log += _step(
+            "🧠", "Step 3/3", "Dispatching to Qwen2.5-Coder...", _elapsed()
+        )
         yield None, None, step_log
 
         llm_result, llm_error = {}, {}
@@ -520,11 +606,11 @@ def grade_assignment(question_pdf, rubric_txt, notebook_ipynb, run_code):
         if "err" in llm_error:
             raise llm_error["err"]
 
-        llm_elapsed   = time.time() - llm_start
+        llm_elapsed = time.time() - llm_start
         total_elapsed = time.time() - overall_start
 
-        result   = llm_result["data"]
-        html     = render_html_report(result, llm_elapsed, total_elapsed)
+        result = llm_result["data"]
+        html = render_html_report(result, llm_elapsed, total_elapsed)
         json_out = json.dumps(result, indent=2)
 
         yield json_out, html, _done_status(llm_elapsed, total_elapsed)
@@ -551,33 +637,50 @@ with gr.Blocks(
                       color: white !important; font-weight: 700 !important;
                       font-size: 16px !important; height: 52px !important; }
         .status-box { min-height: 44px; }
-    """
+    """,
 ) as demo:
 
-    gr.HTML("""
+    gr.HTML(
+        """
     <div style="text-align:center;padding:24px 0 8px">
       <h1 style="font-size:28px;font-weight:800;margin:0;color:#0f172a">🎓 AI Assignment Grader</h1>
       <p style="color:#64748b;margin:6px 0 0;font-size:14px">
         Powered by Qwen2.5-Coder via Ollama · Score · Strengths · Rubric-aware Feedback
       </p>
     </div>
-    """)
+    """
+    )
 
     with gr.Row():
         with gr.Column(scale=1):
             gr.Markdown("### 📂 Upload Files")
-            question_pdf   = gr.File(label="📄 Assignment Question (PDF)",  file_types=[".pdf"],   elem_classes=["upload-box"])
-            rubric_txt     = gr.File(label="📋 Grading Rubric (TXT)",       file_types=[".txt"],   elem_classes=["upload-box"])
-            notebook_ipynb = gr.File(label="📓 Student Notebook (IPYNB)",   file_types=[".ipynb"], elem_classes=["upload-box"])
+            question_pdf = gr.File(
+                label="📄 Assignment Question (PDF)",
+                file_types=[".pdf"],
+                elem_classes=["upload-box"],
+            )
+            rubric_txt = gr.File(
+                label="📋 Grading Rubric (TXT)",
+                file_types=[".txt"],
+                elem_classes=["upload-box"],
+            )
+            notebook_ipynb = gr.File(
+                label="📓 Student Notebook (IPYNB)",
+                file_types=[".ipynb"],
+                elem_classes=["upload-box"],
+            )
             run_code = gr.Checkbox(
                 label="⚙️ Run code in sandbox (30s timeout)",
                 value=False,
-                info="Executes the notebook and feeds output to the LLM."
+                info="Executes the notebook and feeds output to the LLM.",
             )
-            grade_btn  = gr.Button("🚀 Grade Assignment", variant="primary", elem_classes=["grade-btn"])
+            grade_btn = gr.Button(
+                "🚀 Grade Assignment", variant="primary", elem_classes=["grade-btn"]
+            )
             status_box = gr.HTML(value="", elem_classes=["status-box"])
 
-            gr.Markdown("""
+            gr.Markdown(
+                """
             ---
             **Output:** Score / 25 · Per-criterion breakdown · Strengths · Rubric violations with fixes
 
@@ -585,7 +688,8 @@ with gr.Blocks(
             - PDF must have selectable text
             - Use explicit penalty rules in rubric for best feedback
             - First load: model download (~5 min) · Grading: 30–90 sec
-            """)
+            """
+            )
 
         with gr.Column(scale=2):
             gr.Markdown("### 📊 Results")
@@ -597,7 +701,9 @@ with gr.Blocks(
                                  Upload files and click <b>🚀 Grade Assignment</b> to begin.</div>"""
                     )
                 with gr.TabItem("🔧 Raw JSON"):
-                    json_output = gr.Code(language="json", label="Raw grading output", lines=30)
+                    json_output = gr.Code(
+                        language="json", label="Raw grading output", lines=30
+                    )
 
     grade_btn.click(
         fn=grade_assignment,
