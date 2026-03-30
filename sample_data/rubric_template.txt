@@ -1,0 +1,36 @@
+ASSIGNMENT RUBRIC — ANN Assignment
+Total: 25 points
+
+── CRITERION 1: Data Loading & Exploration  [5 pts] ──
+Full marks: Loads dataset correctly, displays shape, dtypes, null counts, and summary stats.
+Penalise:
+  - No .info() or .describe() called (-2)
+  - Shape not checked (-1)
+  - Null counts not inspected (-2)
+
+── CRITERION 2: Data Cleaning  [7 pts] ──
+Full marks: Handles nulls with appropriate strategy (median for skewed, mean for normal),
+  removes duplicates, fixes dtypes, no data leakage.
+Penalise:
+  - fillna(0) used on continuous columns (-3) — should use median/mean
+  - Duplicates not removed (-2)
+  - Cleaning done AFTER train/test split (leakage) (-3)
+  - Dtype issues not fixed (-1)
+
+── CRITERION 3: Analysis & Visualisation  [8 pts] ──
+Full marks: At least 2 meaningful plots with titles/labels, correct statistical
+  interpretation, correlation analysis.
+Penalise:
+  - Plots have no axis labels or title (-2)
+  - No statistical interpretation written (-3)
+  - Only one visualisation (-2)
+  - Correlation matrix not shown or misread (-2)
+
+── CRITERION 4: Code Quality  [5 pts] ──
+Full marks: PEP8, functions used, docstrings present, no magic numbers,
+  meaningful variable names throughout.
+Penalise:
+  - No functions defined, all code in global scope (-2)
+  - No comments or docstrings (-2)
+  - Magic numbers hardcoded (-1)
+  - Variable names like x, df2, tmp (-1)
