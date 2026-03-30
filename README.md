@@ -1,7 +1,7 @@
 ---
 title: AI Assignment Grader
 emoji: 🎓
-colorFrom: slate
+colorFrom: yellow
 colorTo: blue
 sdk: docker
 app_port: 7860
