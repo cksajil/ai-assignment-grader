@@ -13,8 +13,9 @@
 
 ## 📸 Demo
 
-<!-- Replace with your actual screenshot or GIF -->
-![AI Assignment Grader Demo](assets/demo.gif)
+[![Watch Demo](assets/demo_thumbnail.png)](https://youtu.be/mn-7UMb5nkE)
+
+[![Demo Video](https://img.shields.io/badge/▶_Watch_Demo-YouTube-red?style=for-the-badge&logo=youtube)](https://youtu.be/mn-7UMb5nkE)
 
 🔗 **[Live Demo on HuggingFace Spaces](https://huggingface.co/spaces/sajilck/ai-assignment-grader)**
 
