@@ -53,7 +53,6 @@ Each improvement card shows:
 | **Live inference timer** | Background thread runs LLM; generator yields 1s ticks to Gradio — real-time elapsed display |
 | **Structured JSON output** | Typed schema with `criterion_scores`, `strengths`, `areas_to_improve[{category, rubric_requirement, issue, why_it_matters, fix}]` |
 | **Docker deployment** | One-command deploy to HuggingFace Spaces |
-| **CI/CD** | GitHub Actions auto-syncs to HF Spaces on every push to `main` |
 
 ---
 
@@ -153,12 +152,8 @@ ai-assignment-grader/
 │   ├── rubric_template.txt           # Rubric format with penalty rules
 │   └── sample_submission.ipynb       # Example student notebook for testing
 │
-├── assets/
-│   └── demo_thumbnail.png            # Demo video thumbnail for README
-│
-└── .github/
-    └── workflows/
-        └── sync_to_hf.yml            # Auto-deploy to HuggingFace Spaces
+└── assets/
+    └── demo_thumbnail.png            # Demo video thumbnail for README
 ```
 
 ---
@@ -213,9 +208,6 @@ See [`sample_data/rubric_template.txt`](sample_data/rubric_template.txt) for the
 # 2. Push
 git remote add hf https://huggingface.co/spaces/YOUR_USERNAME/ai-assignment-grader
 git push hf main
-
-# Auto-deploy on every git push (after setting HF_TOKEN secret in GitHub):
-# .github/workflows/sync_to_hf.yml handles this automatically
 ```
 
 **Hardware recommendations:**
@@ -240,7 +232,6 @@ git push hf main
 | Inference | Ollama REST API (`/api/chat`, `format=json`) |
 | Containerisation | Docker |
 | Deployment | HuggingFace Spaces (Docker SDK) |
-| CI/CD | GitHub Actions |
 
 ---
 
