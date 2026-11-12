@@ -5,7 +5,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python&logoColor=white)](https://python.org)
 [![Ollama](https://img.shields.io/badge/Ollama-Qwen2.5--Coder:7b-black?logo=ollama)](https://ollama.com)
 [![Gradio](https://img.shields.io/badge/Gradio-4.0+-orange?logo=gradio)](https://gradio.app)
-[![HuggingFace](https://img.shields.io/badge/🤗%20HuggingFace-Spaces-yellow)](https://huggingface.co/spaces)
+[![HuggingFace](https://img.shields.io/badge/🤗%20HuggingFace-Spaces--ready-yellow)](#-deploy-to-huggingface-spaces)
 [![Docker](https://img.shields.io/badge/Docker-ready-blue?logo=docker)](https://docker.com)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
@@ -17,7 +17,6 @@
 
 [![Demo Video](https://img.shields.io/badge/▶_Watch_Demo-YouTube-red?style=for-the-badge&logo=youtube)](https://youtu.be/mn-7UMb5nkE)
 
-🔗 **[Live Demo on HuggingFace Spaces](https://huggingface.co/spaces/sajilck/ai-assignment-grader)**
 
 ---
 
@@ -155,7 +154,7 @@ ai-assignment-grader/
 │   └── sample_submission.ipynb       # Example student notebook for testing
 │
 ├── assets/
-│   └── demo.gif                      # Demo animation for README
+│   └── demo_thumbnail.png            # Demo video thumbnail for README
 │
 └── .github/
     └── workflows/
